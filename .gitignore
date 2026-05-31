@@ -1,0 +1,16 @@
+# Secrets
+config.env
+.env
+api_key
+
+# Backups & Temp files
+*.bak*
+*.tmp
+*.swp
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+*.log

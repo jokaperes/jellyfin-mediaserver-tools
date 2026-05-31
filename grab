@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# grab — add a torrent to qBittorrent under the right Jellyfin category.
+# Usage: grab <anime|movies|shows> <magnet-or-torrent-url> [more-links...]
+set -euo pipefail
+
+# 1. Load config
+CONF_FILE="$HOME/.config/mediaserver/config.env"
+if [ -f "$CONF_FILE" ]; then
+  # shellcheck source=/dev/null
+  source "$CONF_FILE"
+fi
+
+# Load settings from config, or use sensible defaults
+QBT="${QBT_URL:-http://localhost:8080}"
+PROJECT_LOG="${PROJECT_LOG:-/srv/downloads/mediaserver.log}"
+
+plog() { echo "$(date '+%F %T') [grab] $*" >> "$PROJECT_LOG" 2>/dev/null || true; }
+
+usage() {
+  echo "Usage: grab <anime|movies|shows> <magnet-or-torrent-url> [more-links...]" >&2
+  exit 1
+}
+
+[[ $# -lt 2 ]] && usage
+CAT="$1"; shift
+
+case "$CAT" in
+  anime|movies|shows) ;;
+  *) echo "Unknown category '$CAT' (use: anime, movies, shows)" >&2; usage ;;
+esac
+
+for LINK in "$@"; do
+  if curl -fsS \
+    --data-urlencode "urls=$LINK" \
+    --data-urlencode "category=$CAT" \
+    --data-urlencode "autoTMM=true" \
+    "$QBT/api/v2/torrents/add" >/dev/null; then
+    echo "queued [$CAT] -> $LINK"
+    plog "QUEUED [$CAT] ${LINK:0:80}"
+  else
+    echo "FAILED  [$CAT] -> $LINK" >&2
+    plog "ERROR add failed [$CAT] ${LINK:0:80}"
+  fi
+done

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# postdl — qBittorrent "Run on torrent completion" hook.
+# Args (from qBittorrent): %F=content path  %L=category  %N=name  %D=save path
+# Fetches PT-BR subtitles, triggers a Jellyfin scan, then pushes an ntfy alert.
+set -u
+
+# 1. Load config
+CONF_FILE="$HOME/.config/mediaserver/config.env"
+if [ -f "$CONF_FILE" ]; then
+  # shellcheck source=/dev/null
+  source "$CONF_FILE"
+else
+  echo "Error: Config file not found at $CONF_FILE. Please create it using config.env.example." >&2
+  exit 1
+fi
+
+CONTENT="${1:-}"
+CATEGORY="${2:-}"
+NAME="${3:-}"
+SAVE="${4:-}"
+
+# Load settings from config, or use sensible defaults
+LOG="${LOG_FILE:-$HOME/.config/opensubtitles/fetchsub.log}"
+PROJECT_LOG="${PROJECT_LOG:-/srv/downloads/mediaserver.log}"
+JELLYFIN_KEY="${JELLYFIN_KEY:-}"
+NTFY_URL="${NTFY_URL:-}"
+JELLYFIN_URL="${JELLYFIN_URL:-http://localhost:8096}"
+
+plog() { echo "$(date '+%F %T') [postdl] $*" >> "$PROJECT_LOG" 2>/dev/null || true; }
+
+echo "$(date '+%F %T') postdl: name='$NAME' category='$CATEGORY' content='$CONTENT'" >> "$LOG" 2>&1
+plog "COMPLETE [$CATEGORY] $NAME"
+
+# 1) Subtitles (movies + shows + anime)
+case "$CATEGORY" in
+  movies|shows|anime)
+    /usr/local/bin/fetchsub "${CONTENT:-$SAVE}" >> "$LOG" 2>&1
+    ;;
+esac
+
+# 2) Tell Jellyfin to rescan so the new media + sidecar show up
+if [ -n "$JELLYFIN_KEY" ]; then
+  if /usr/bin/curl -sf -X POST \
+    "${JELLYFIN_URL}/Library/Refresh?api_key=${JELLYFIN_KEY}" >/dev/null 2>&1; then
+    :
+  else
+    plog "ERROR Jellyfin library refresh failed"
+  fi
+else
+  plog "WARNING Jellyfin refresh skipped (JELLYFIN_KEY not set)"
+fi
+
+# 3) ntfy notification (Portuguese). Title stays ASCII (header limitation);
+#    the accented sentence goes in the body, which is UTF-8 safe.
+DISPLAY=$(NAME="$NAME" python3 - <<'PY'
+import os, re
+n = re.sub(r'[._]', ' ', os.environ.get('NAME', ''))
+n = re.sub(r'\[[^\]]*\]', ' ', n)            # drop [GroupName]
+se = re.search(r'\bS(\d{1,2})\s?E(\d{1,3})\b', n, re.I)
+if se:
+    title = n[:se.start()].strip() + ' ' + se.group(0).upper()
+else:
+    ym = re.search(r'\b(19|20)\d{2}\b', n)
+    if ym:
+        title = n[:ym.start()].strip() + ' (' + ym.group(0) + ')'
+    else:
+        title = re.split(r'\b(1080p|720p|2160p|480p|WEB|BluRay|BDRip|x264|x265|HEVC|H ?264)\b',
+                         n, flags=re.I)[0].strip()
+print(re.sub(r'\s+', ' ', title).strip() or os.environ.get('NAME', ''))
+PY
+)
+
+# Subtitle presence. For a single-file movie torrent %F is the .mkv itself
+# (not a folder), so check that video's own sidecar; for multi-file/dir
+# torrents fall back to searching inside the content dir.
+HAVE_SUB=0
+if [ -f "${CONTENT}" ]; then
+  BASE="${CONTENT%.*}"
+  for ext in por.srt por.ass; do
+    [ -f "${BASE}.${ext}" ] && HAVE_SUB=1
+  done
+elif find "${CONTENT:-$SAVE}" \( -iname '*.por.srt' -o -iname '*.por.ass' \) 2>/dev/null | grep -q .; then
+  HAVE_SUB=1
+fi
+if [ "$HAVE_SUB" -eq 1 ]; then
+  SUBNOTE="com legenda PT-BR"
+else
+  SUBNOTE="legenda PT-BR não encontrada"
+fi
+
+case "$CATEGORY" in
+  movies) NTITLE="Filme pronto";  EMOJI="🎬" ;;
+  shows)  NTITLE="Serie pronta";  EMOJI="📺" ;;
+  anime)  NTITLE="Anime pronto";  EMOJI="🍙" ;;
+  *)      NTITLE="Download pronto"; EMOJI="✅" ;;
+esac
+
+if [ -n "$NTFY_URL" ]; then
+  if /usr/bin/curl -sf \
+    -H "Title: ${NTITLE}" \
+    -H "Tags: white_check_mark" \
+    -H "Priority: default" \
+    -d "${EMOJI} ${DISPLAY} já está disponível no Jellyfin — ${SUBNOTE}." \
+    "$NTFY_URL" >/dev/null 2>&1; then
+    plog "READY '$DISPLAY' [$SUBNOTE] + notified"
+  else
+    plog "ERROR ntfy notification failed for '$DISPLAY'"
+  fi
+else
+  plog "READY '$DISPLAY' [$SUBNOTE] (ntfy skipped)"
+fi
+
+echo "$(date '+%F %T') postdl: done ($NAME) -> '$DISPLAY' [$SUBNOTE]" >> "$LOG" 2>&1

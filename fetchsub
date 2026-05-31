@@ -1,0 +1,445 @@
+#!/usr/bin/env python3
+"""fetchsub — download the best PT-BR subtitle for video file(s), saved as a
+`<video>.por.srt` sidecar so Jellyfin auto-selects it.
+
+Providers, tried in order until one yields a confident match:
+  1. OpenSubtitles (api.opensubtitles.com):
+       movies   -> moviehash -> imdb_id -> filtered free-text query
+       TV shows -> moviehash -> parent_imdb_id + season/episode (resolved from
+                   the show title via /features), then a free-text fallback.
+     Relaxed fallbacks (accept pt-PT, drop year) before giving up.
+  2. SubDL (api.subdl.com) — if ~/.config/subdl/api_key exists.
+
+Usage:
+  fetchsub <video-file-or-directory> [more...]
+  fetchsub --imdb <id> <video-file>     # force a title id: the show's parent
+                                        # IMDb id for TV, or the movie's id
+"""
+import os, sys, re, json, struct, time, io, zipfile
+import urllib.request, urllib.parse, urllib.error
+
+OS_API = "https://api.opensubtitles.com/api/v1"
+UA = "JellyfinPiGrabber v1.1"
+OS_KEY_FILE = os.path.expanduser("~/.config/opensubtitles/api_key")
+SUBDL_KEY_FILE = os.path.expanduser("~/.config/subdl/api_key")
+LOG_FILE = os.path.expanduser("~/.config/opensubtitles/fetchsub.log")
+PROJECT_LOG = "/srv/downloads/mediaserver.log"
+VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".webm", ".ts"}
+
+
+def log(msg):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+    print(line, flush=True)
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def plog(msg):
+    """Concise lifecycle line in the shared project log."""
+    try:
+        with open(PROJECT_LOG, "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [fetchsub] {msg}\n")
+    except OSError:
+        pass
+
+
+def read_key(path):
+    try:
+        with open(path) as f:
+            k = f.read().strip()
+            return k or None
+    except OSError:
+        return None
+
+
+def req(url, data=None, headers=None, raw=False):
+    h = {"User-Agent": UA, "Accept": "application/json"}
+    if headers:
+        h.update(headers)
+    body = json.dumps(data).encode() if data is not None else None
+    if body is not None:
+        h["Content-Type"] = "application/json"
+    r = urllib.request.Request(url, data=body, headers=h,
+                               method="POST" if data is not None else "GET")
+    with urllib.request.urlopen(r, timeout=30) as resp:
+        content = resp.read()
+    return content if raw else json.loads(content)
+
+
+def moviehash(path):
+    fmt = "<q"
+    bsize = struct.calcsize(fmt)
+    fsize = os.path.getsize(path)
+    if fsize < 65536 * 2:
+        return None
+    h = fsize
+    with open(path, "rb") as f:
+        for _ in range(65536 // bsize):
+            (v,) = struct.unpack(fmt, f.read(bsize))
+            h = (h + v) & 0xFFFFFFFFFFFFFFFF
+        f.seek(fsize - 65536)
+        for _ in range(65536 // bsize):
+            (v,) = struct.unpack(fmt, f.read(bsize))
+            h = (h + v) & 0xFFFFFFFFFFFFFFFF
+    return "%016x" % h
+
+
+def norm(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def parse_name(name):
+    n = re.sub(r"[._]", " ", os.path.splitext(name)[0])
+    se = re.search(r"\bS(\d{1,2})\s?E(\d{1,3})\b", n, re.I)
+    season = episode = None
+    if se:
+        season, episode = int(se.group(1)), int(se.group(2))
+        title = n[:se.start()].strip()
+        year = None
+    else:
+        ym = re.search(r"\b(19|20)\d{2}\b", n)
+        year = int(ym.group(0)) if ym else None
+        title = n[:ym.start()].strip() if ym else \
+            re.split(r"\b(1080p|720p|2160p|480p|web|bluray|hdrip|x26|hevc)\b", n, flags=re.I)[0].strip()
+    return {"title": title, "year": year, "season": season, "episode": episode}
+
+
+def source_of(s):
+    s = (s or "").lower().replace("-", "").replace(".", "").replace(" ", "")
+    for key in ("bluray", "bdrip", "brrip", "webdl", "webrip", "hdtv",
+                "dvdrip", "hdrip", "telesync", "telecine", "cam"):
+        if key in s:
+            return "webdl" if key == "webdl" else key
+    return None
+
+
+AD_RE = re.compile(r"opensubtitles|anuncie seu produto|legende seu|os\.org|"
+                   r"subscene|subdivx|allsubs|addic7ed|baixe agora|subdl", re.I)
+
+
+def strip_ads(raw):
+    text = raw.decode("utf-8", errors="replace").lstrip("\ufeff")
+    blocks = re.split(r"\n\s*\n", text.strip())
+    kept = [b for b in blocks if not AD_RE.search(b)]
+    out = []
+    for i, b in enumerate(kept, 1):
+        lines = b.strip().splitlines()
+        if lines and lines[0].strip().isdigit():
+            lines = lines[1:]
+        out.append(str(i) + "\n" + "\n".join(lines))
+    return ("\n\n".join(out) + "\n").encode("utf-8")
+
+
+def save_sub(video, raw):
+    out = os.path.splitext(video)[0] + ".por.srt"
+    with open(out, "wb") as f:
+        f.write(strip_ads(raw))
+    os.chmod(out, 0o664)
+    return out
+
+
+# ---------- OpenSubtitles ----------
+
+def os_get(key, params):
+    url = f"{OS_API}/subtitles?{urllib.parse.urlencode(params)}"
+    try:
+        return req(url, headers={"Api-Key": key}).get("data", [])
+    except urllib.error.HTTPError as e:
+        log(f"  os search HTTP {e.code} ({params})")
+        return []
+
+
+def imdb_num(x):
+    """Normalise an IMDb id ('tt0373732', '373732', 373732) to bare digits."""
+    if not x:
+        return None
+    return (re.sub(r"\D", "", str(x)).lstrip("0")) or None
+
+
+_PARENT_CACHE = {}
+
+
+def os_resolve_parent_imdb(key, title):
+    """Resolve a TV show's IMDb id from its title via /features (cached).
+
+    OpenSubtitles' free-text `query` is unreliable for episodes; searching by
+    `parent_imdb_id` + season/episode is the dependable path. We look the show
+    up once and reuse the id for every episode in the same run.
+    """
+    if not title:
+        return None
+    k = norm(title)
+    if k in _PARENT_CACHE:
+        return _PARENT_CACHE[k]
+    pid = None
+    try:
+        url = f"{OS_API}/features?{urllib.parse.urlencode({'query': title, 'type': 'tv'})}"
+        data = req(url, headers={"Api-Key": key}).get("data", [])
+        want = norm(title)
+        for f in data:
+            a = f.get("attributes", {}) or {}
+            ft = norm(a.get("title"))
+            if ft and (ft == want or ft.startswith(want) or want.startswith(ft)):
+                pid = imdb_num(a.get("imdb_id"))
+                if pid:
+                    log(f"  os resolved tv '{title}' -> imdb {pid}")
+                    break
+        if not pid:
+            log(f"  os: no tv feature match for '{title}'")
+    except urllib.error.HTTPError as e:
+        log(f"  os features HTTP {e.code}")
+    _PARENT_CACHE[k] = pid
+    return pid
+
+
+def title_matches(item, want_title, want_year, year_tol=1):
+    fd = item["attributes"].get("feature_details", {}) or {}
+    ft, fy = norm(fd.get("title")), fd.get("year")
+    wt = norm(want_title)
+    if not ft or not wt:
+        return False
+    if not (ft == wt or ft.startswith(wt) or wt.startswith(ft)):
+        return False
+    if year_tol is not None and want_year and fy and abs(int(fy) - want_year) > year_tol:
+        return False
+    return True
+
+
+def os_best(results, video_name=""):
+    vsrc = source_of(video_name)
+
+    def score(x):
+        a = x["attributes"]
+        lang = (a.get("language") or "").lower()
+        lang_tier = 2 if lang in ("pt-br", "pt_br") else (1 if lang.startswith("pt") else 0)
+        return (1 if a.get("moviehash_match") else 0,
+                lang_tier,                                      # pt-BR over pt-PT
+                1 if (vsrc and source_of(a.get("release", "")) == vsrc) else 0,
+                1 if a.get("from_trusted") else 0,
+                a.get("download_count", 0))
+    return max(results, key=score) if results else None
+
+
+def try_opensubtitles(key, video, imdb=None):
+    info = parse_name(os.path.basename(video))
+    log(f"  parsed: title='{info['title']}' year={info['year']} "
+        f"S{info['season']}E{info['episode']}")
+
+    # 1) exact moviehash (pt-br only)
+    h = moviehash(video)
+    if h:
+        res = os_get(key, {"moviehash": h, "languages": "pt-br"})
+        if res:
+            log(f"  os moviehash {h}: {len(res)} exact match(es)")
+            return _os_download(key, os_best(res, os.path.basename(video)), video)
+        log(f"  os moviehash {h}: no match")
+
+    # 2a) TV episode -> parent_imdb_id + season/episode (the reliable path for
+    #     shows; OpenSubtitles' free-text query returns nothing for many series).
+    if info["season"]:
+        pid = imdb_num(imdb) or os_resolve_parent_imdb(key, info["title"])
+        if pid:
+            for langs in ("pt-br", "pt-br,pt"):
+                res = os_get(key, {"parent_imdb_id": pid,
+                                   "season_number": info["season"],
+                                   "episode_number": info["episode"],
+                                   "languages": langs})
+                if res:
+                    log(f"  os parent_imdb {pid} "
+                        f"S{info['season']}E{info['episode']} [{langs}]: "
+                        f"{len(res)} result(s)")
+                    return _os_download(key, os_best(res, os.path.basename(video)),
+                                        video)
+            log(f"  os parent_imdb {pid}: no pt result for "
+                f"S{info['season']}E{info['episode']}")
+
+    # 2b) explicit IMDb id for MOVIES (pt-br, then pt-br,pt)
+    elif imdb:
+        for langs in ("pt-br", "pt-br,pt"):
+            res = os_get(key, {"imdb_id": imdb, "languages": langs})
+            if res:
+                log(f"  os imdb {imdb} [{langs}]: {len(res)} result(s)")
+                return _os_download(key, os_best(res, os.path.basename(video)), video)
+
+    # 3) text query, progressively relaxed (last resort)
+    base = {"query": info["title"]}
+    if info["season"]:
+        base.update(season_number=info["season"], episode_number=info["episode"])
+    elif info["year"]:
+        base["year"] = info["year"]
+
+    passes = [
+        ("pt-br strict",   dict(base, languages="pt-br"),    1),
+        ("pt-br/pt strict", dict(base, languages="pt-br,pt"), 1),
+        ("pt-br/pt no-year", dict(base, languages="pt-br,pt"), None),
+    ]
+    for label, params, tol in passes:
+        res = os_get(key, params)
+        filt = [x for x in res if title_matches(x, info["title"], info["year"], tol)]
+        log(f"  os query [{label}]: {len(res)} raw -> {len(filt)} after filter")
+        if filt:
+            return _os_download(key, os_best(filt, os.path.basename(video)), video)
+    return None
+
+
+def _os_download(key, pick, video):
+    if not pick:
+        return None
+    a = pick["attributes"]
+    fid = a["files"][0]["file_id"]
+    log(f"  os picked: {a.get('release', '?')[:60]} (lang={a.get('language')}, "
+        f"dl={a.get('download_count')}, hashmatch={a.get('moviehash_match')})")
+    dl = req(f"{OS_API}/download", data={"file_id": fid}, headers={"Api-Key": key})
+    raw = req(dl["link"], raw=True)
+    out = save_sub(video, raw)
+    log(f"  saved -> {out} ({len(raw)} bytes, quota left {dl.get('remaining')})")
+    return ("opensubtitles", a.get("language"), out)
+
+
+# ---------- SubDL ----------
+
+SUBDL_API = "https://api.subdl.com/api/v1/subtitles"
+SUBDL_DL = "https://dl.subdl.com"
+
+
+def _subdl_lang_tier(s):
+    s = (s or "").lower()
+    if "br" in s or "brazil" in s:   # PT-BR / brazillian portuguese
+        return 2
+    if s.startswith("pt") or "portug" in s:
+        return 1
+    return 0
+
+
+def try_subdl(key, video, imdb=None):
+    info = parse_name(os.path.basename(video))
+    common = {"api_key": key, "subs_per_page": 30, "languages": "BR_PT,PT"}
+    if imdb:
+        common["imdb_id"] = imdb if imdb.startswith("tt") else "tt" + imdb
+    else:
+        common["film_name"] = info["title"]
+        if info["year"]:
+            common["year"] = info["year"]
+    if info["season"]:
+        common.update(type="tv", season_number=info["season"],
+                      episode_number=info["episode"])
+    else:
+        common["type"] = "movie"
+
+    url = f"{SUBDL_API}?{urllib.parse.urlencode(common)}"
+    try:
+        data = req(url)
+    except urllib.error.HTTPError as e:
+        log(f"  subdl search HTTP {e.code}")
+        return None
+    subs = data.get("subtitles") or []
+    log(f"  subdl: {len(subs)} candidate(s)")
+    if not subs:
+        return None
+
+    vsrc = source_of(os.path.basename(video))
+
+    def score(s):
+        lang = s.get("language") or s.get("lang") or ""
+        ep_ok = 1
+        if info["season"]:
+            ep = s.get("episode")
+            ep_ok = 1 if (ep in (None, info["episode"])) else 0
+        return (ep_ok,
+                _subdl_lang_tier(lang),
+                1 if (vsrc and source_of(s.get("release_name", "")) == vsrc) else 0)
+
+    pick = max(subs, key=score)
+    if _subdl_lang_tier(pick.get("language") or pick.get("lang")) == 0:
+        log("  subdl: no portuguese candidate")
+        return None
+    rel = pick.get("release_name") or pick.get("name") or "?"
+    path = pick.get("url") or pick.get("zip_url")
+    if not path:
+        return None
+    zurl = path if path.startswith("http") else SUBDL_DL + path
+    log(f"  subdl picked: {rel[:60]} (lang={pick.get('language')})")
+    raw_zip = req(zurl, raw=True)
+    with zipfile.ZipFile(io.BytesIO(raw_zip)) as z:
+        srts = [n for n in z.namelist() if n.lower().endswith((".srt", ".ass"))]
+        if not srts:
+            log("  subdl: zip had no subtitle file")
+            return None
+        srts.sort(key=lambda n: z.getinfo(n).file_size, reverse=True)
+        raw = z.read(srts[0])
+    out = save_sub(video, raw)
+    log(f"  saved -> {out} ({len(raw)} bytes) via subdl")
+    return ("subdl", pick.get("language"), out)
+
+
+# ---------- driver ----------
+
+def fetch_for(os_key, subdl_key, video, imdb=None):
+    base = os.path.splitext(video)[0]
+    for ext in (".por.srt", ".por.ass", ".pt.srt"):
+        if os.path.exists(base + ext):
+            log(f"  already has {base + ext}, skipping")
+            return
+    name = os.path.basename(video)
+    result = None
+    try:
+        result = try_opensubtitles(os_key, video, imdb)
+    except Exception as e:
+        log(f"  opensubtitles ERROR: {e}")
+    if not result and subdl_key:
+        log("  -> falling back to SubDL")
+        try:
+            result = try_subdl(subdl_key, video, imdb)
+        except Exception as e:
+            log(f"  subdl ERROR: {e}")
+    if result:
+        provider, lang, out = result
+        plog(f"OK   {name} <- {provider} ({lang})")
+    else:
+        log(f"  NO confident pt match for {name} (left unsubtitled)")
+        plog(f"NONE {name} (no PT subtitle found)")
+
+
+def collect(path):
+    if os.path.isfile(path):
+        return [path] if os.path.splitext(path)[1].lower() in VIDEO_EXT else []
+    vids = []
+    for root, _, files in os.walk(path):
+        for fn in files:
+            if os.path.splitext(fn)[1].lower() in VIDEO_EXT:
+                vids.append(os.path.join(root, fn))
+    return sorted(vids)
+
+
+def main():
+    args = sys.argv[1:]
+    imdb = None
+    if args and args[0] == "--imdb":
+        imdb = args[1]
+        args = args[2:]
+    if not args:
+        print(__doc__)
+        sys.exit(1)
+    os_key = read_key(OS_KEY_FILE)
+    if not os_key:
+        log("ERROR: no OpenSubtitles API key")
+        plog("ERROR no OpenSubtitles API key")
+        sys.exit(1)
+    subdl_key = read_key(SUBDL_KEY_FILE)
+    if not subdl_key:
+        log("  (SubDL key absent -> tier-2 disabled)")
+    for arg in args:
+        for v in collect(arg):
+            log(f"video: {v}")
+            try:
+                fetch_for(os_key, subdl_key, v, imdb)
+            except Exception as e:
+                log(f"  ERROR: {e}")
+                plog(f"ERROR {os.path.basename(v)}: {e}")
+
+
+if __name__ == "__main__":
+    main()
