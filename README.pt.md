@@ -1,10 +1,15 @@
-# Jellyfin Mediaserver Tools
+# jellyhand
+
+*Automação de Jellyfin sem esforço.*
 
 Três scripts leves que automatizam um fluxo de Jellyfin self-hosted:
-**baixar um torrent → buscar a melhor legenda em português (pt-BR) → mandar o
+**baixar um torrent → buscar a melhor legenda no seu idioma → mandar o
 Jellyfin reescanear → receber uma notificação no celular.** Feito para um
 servidor Linux headless (originalmente um Raspberry Pi 5), mas funciona em
 qualquer máquina com Python 3, `curl` e qBittorrent + Jellyfin.
+
+O idioma padrão é **inglês**, mas dá pra escolher pt-BR (ou 15+ outros) com
+uma linha de config — veja [Escolhendo o idioma da legenda](#escolhendo-o-idioma-da-legenda).
 
 > 🇬🇧 English version: [`README.md`](README.md)
 
@@ -14,7 +19,7 @@ qualquer máquina com Python 3, `curl` e qBittorrent + Jellyfin.
 |------------|-----------|--------|
 | `grab`     | bash      | Adiciona um magnet/torrent no qBittorrent na categoria certa (`anime`/`movies`/`shows`). |
 | `postdl`   | bash      | Hook de "executar ao concluir" do qBittorrent. Chama o `fetchsub`, manda o Jellyfin reescanear e envia um push via ntfy. |
-| `fetchsub` | python3   | Baixa a melhor legenda pt-BR de um arquivo/pasta, salva como `<video>.por.srt`. Funciona sozinho. |
+| `fetchsub` | python3   | Baixa a melhor legenda (no idioma que você escolher) de um arquivo/pasta, salva como `<video>.<iso>.srt`. Funciona sozinho. |
 
 Cada um é independente — dá pra usar o `fetchsub` sozinho, sem a parte de torrent.
 
@@ -63,25 +68,25 @@ fetchsub --imdb 133093 "/path/Matrix.mkv"      # forçar um id
 
 ## Escolhendo o idioma da legenda
 
-O padrão é **português do Brasil (pt-BR)** — e **só** pt-BR, nunca o de
-Portugal (pt-PT). Pra buscar outro idioma, use `SUB_LANG`:
+O padrão é **inglês (`en`)**, mas qualquer idioma é cidadão de primeira classe.
+Defina `SUB_LANG` com o que quiser — pontual:
 
 ```bash
-SUB_LANG=en fetchsub "/path/Filme.mkv"      # pontual
+SUB_LANG=pt-br fetchsub "/path/Filme.mkv"   # só nessa execução
 ```
 …ou fixe no `~/.config/mediaserver/config.env` (o `postdl` repassa pro `fetchsub`):
 ```bash
-SUB_LANG="es"          # ex.: espanhol; sidecar vira .spa.srt
+SUB_LANG="pt-br"       # português do Brasil; sidecar vira .por.srt
 SUB_LANG_FALLBACK="0"  # 1 = aceita a variante ampla quando a exata falta
 ```
 
-Idiomas prontos: `pt-br` `pt` `en` `es` `es-mx` `fr` `de` `it` `nl` `pl` `ru`
-`ja` `ko` `zh-cn` `ar` `tr` (qualquer código do OpenSubtitles também funciona).
+Idiomas prontos: `en` `es` `es-mx` `fr` `de` `it` `nl` `pl` `ru` `ja` `ko`
+`zh-cn` `ar` `tr` `pt-br` `pt` (qualquer código do OpenSubtitles também funciona).
 Pra adicionar/ajustar, edite a tabela `LANG_TABLE` no topo do `fetchsub`.
 
-**Estrito por padrão:** só a variante exata é baixada — um pedido `pt-br`
-**nunca** baixa um arquivo `pt-PT`. Use `SUB_LANG_FALLBACK=1` se preferir a
-variante ampla a ficar sem legenda.
+**Estrito por padrão:** só a variante exata é baixada — `pt-br` (Brasil)
+**nunca** baixa `pt` (Portugal), e vice-versa. Use `SUB_LANG_FALLBACK=1` se
+preferir a variante ampla a ficar sem legenda.
 
 ## Como o `fetchsub` escolhe a legenda
 

@@ -1,4 +1,7 @@
-# Jellyfin Mediaserver Tools
+# jellyhand
+
+*Hands-off Jellyfin automation.*
+
 
 Three small, dependency-light scripts that automate a self-hosted Jellyfin
 pipeline: **grab a torrent → fetch the best subtitle in your language →
