@@ -22,7 +22,7 @@ repo root. Deploy them to `/usr/local/bin/`.
 2. **Subtitle sidecars must be named `<video>.<iso639-2>.srt`** — `.por.srt`
    for Portuguese, `.eng.srt` for English, etc. Jellyfin reads the ISO-639-2
    code; it ignores `.pt-br`/`.pt-BR`/`.pb`. `fetchsub` derives this from the
-   `SUB_LANG` env var (default `pt-br` → `por`); `postdl` mirrors the same map.
+   `SUB_LANG` env var (default `en` → `eng`); `postdl` mirrors the same map.
 3. **Do not seed / do not open inbound ports** if the host owner runs privacy-
    first (firewalled, VPN-only). Lock the qBittorrent + Jellyfin APIs to
    localhost or the private network.
@@ -61,7 +61,7 @@ repo root. Deploy them to `/usr/local/bin/`.
 
 ## Subtitle logic you must preserve when modifying `fetchsub`
 
-- **Language is config-driven via `SUB_LANG`** (default `pt-br`). The
+- **Language is config-driven via `SUB_LANG`** (default `en`). The
   `LANG_TABLE` dict maps each language key to its OpenSubtitles codes, SubDL
   codes, and ISO-639-2 sidecar suffix. To support a new language, add a row —
   do *not* sprinkle language strings through the code.

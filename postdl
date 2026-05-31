@@ -28,11 +28,11 @@ PROJECT_LOG="${PROJECT_LOG:-$HOME/.config/mediaserver/mediaserver.log}"
 JELLYFIN_KEY="${JELLYFIN_KEY:-}"
 NTFY_URL="${NTFY_URL:-}"
 JELLYFIN_URL="${JELLYFIN_URL:-http://localhost:8096}"
-SUB_LABEL="${SUB_LABEL:-PT-BR}"   # word shown in the notification text
+SUB_LABEL="${SUB_LABEL:-${SUB_LANG:-EN}}"   # word shown in the notification text
 
 # Subtitle sidecar suffix (ISO-639-2), mirrors fetchsub's SUB_LANG so the
-# "has subtitle?" check below looks for the right file. Defaults to pt-BR=por.
-case "${SUB_LANG:-pt-br}" in
+# "has subtitle?" check below looks for the right file. Defaults to en=eng.
+case "${SUB_LANG:-en}" in
   pt-br|pt) SUB_ISO="por" ;;
   en)       SUB_ISO="eng" ;;
   es|es-mx) SUB_ISO="spa" ;;
@@ -47,7 +47,7 @@ case "${SUB_LANG:-pt-br}" in
   zh-cn)    SUB_ISO="chi" ;;
   ar)       SUB_ISO="ara" ;;
   tr)       SUB_ISO="tur" ;;
-  *)        SUB_ISO="por" ;;
+  *)        SUB_ISO="eng" ;;
 esac
 
 plog() { echo "$(date '+%F %T') [postdl] $*" >> "$PROJECT_LOG" 2>/dev/null || true; }

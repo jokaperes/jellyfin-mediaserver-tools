@@ -2,12 +2,12 @@
 """fetchsub — download the best subtitle for video file(s), saved as a
 `<video>.<lang>.srt` sidecar so Jellyfin auto-selects it.
 
-Default language is Brazilian Portuguese (pt-BR), saved as `.por.srt`. Change
-it with the SUB_LANG env var (see the LANG_TABLE below): e.g. SUB_LANG=en,
-SUB_LANG=es, SUB_LANG=fr, SUB_LANG=pt (Portugal). By default only the exact
-variant is fetched — a pt-BR request will NEVER download pt-PT. Set
-SUB_LANG_FALLBACK=1 to also accept the broader language when the exact one is
-missing.
+Default language is English (en), saved as `.eng.srt`. Change it with the
+SUB_LANG env var (see the LANG_TABLE below): e.g. SUB_LANG=es, SUB_LANG=fr,
+SUB_LANG=pt-br (Brazilian Portuguese), SUB_LANG=pt (Portugal), SUB_LANG=ja.
+By default only the exact variant is fetched — a pt-br request will NEVER
+download pt-PT, and vice-versa. Set SUB_LANG_FALLBACK=1 to also accept the
+broader language when the exact one is missing.
 
 Providers, tried in order until one yields a confident match:
   1. OpenSubtitles (api.opensubtitles.com):
@@ -38,7 +38,7 @@ PROJECT_LOG = os.environ.get(
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".webm", ".ts"}
 
 # ---- subtitle language configuration ----------------------------------------
-# Pick the subtitle language with the SUB_LANG env var (default pt-BR). Each
+# Pick the subtitle language with the SUB_LANG env var (default en). Each
 # entry maps a language key to:
 #   (OpenSubtitles codes [exact first], OS broader-fallback codes,
 #    SubDL exact code(s),  SubDL broader code(s),  ISO-639-2 sidecar suffix)
@@ -63,14 +63,14 @@ LANG_TABLE = {
     "tr":    (["tr"],          ["tr"],          "TR",    "TR",       "tur"),
 }
 
-SUB_LANG = (os.environ.get("SUB_LANG") or "pt-br").lower().strip()
+SUB_LANG = (os.environ.get("SUB_LANG") or "en").lower().strip()
 SUB_LANG_FALLBACK = (os.environ.get("SUB_LANG_FALLBACK") or "0").strip().lower() \
     not in ("", "0", "false", "no", "off")
 
 if SUB_LANG not in LANG_TABLE:
     # Unknown code: best-effort generic mapping so any OpenSubtitles language
     # code still works (sidecar uses the first three letters as a stand-in).
-    _c = SUB_LANG or "pt-br"
+    _c = SUB_LANG or "en"
     LANG_TABLE[_c] = ([_c], [_c], _c.upper().replace("-", "_"),
                       _c.upper().replace("-", "_"), re.sub(r"[^a-z]", "", _c)[:3] or "und")
 

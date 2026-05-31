@@ -1,10 +1,14 @@
 # Jellyfin Mediaserver Tools
 
 Three small, dependency-light scripts that automate a self-hosted Jellyfin
-pipeline: **grab a torrent → fetch the best Brazilian-Portuguese subtitle →
+pipeline: **grab a torrent → fetch the best subtitle in your language →
 rescan Jellyfin → get a phone notification.** Built for a headless Linux box
 (originally a Raspberry Pi 5) but portable to any machine with Python 3,
 `curl`, and a qBittorrent + Jellyfin install.
+
+Subtitles default to **English** and support 16+ languages out of the box —
+pick yours with one config line (see
+[Choosing the subtitle language](#choosing-the-subtitle-language)).
 
 > 🇧🇷 Versão em português: [`README.pt.md`](README.pt.md)
 
@@ -14,7 +18,7 @@ rescan Jellyfin → get a phone notification.** Built for a headless Linux box
 |------------|----------|------|
 | `grab`     | bash     | Queue a magnet/torrent into qBittorrent under the right category (`anime`/`movies`/`shows`). |
 | `postdl`   | bash     | qBittorrent "run on completion" hook. Calls `fetchsub`, triggers a Jellyfin rescan, sends an ntfy push. |
-| `fetchsub` | python3  | Download the best PT-BR subtitle for a file/folder, saved as a `<video>.por.srt` sidecar. Standalone-usable. |
+| `fetchsub` | python3  | Download the best subtitle (your chosen language) for a file/folder, saved as a `<video>.<iso>.srt` sidecar. Standalone-usable. |
 
 Each is independent — you can use `fetchsub` on its own without the torrent
 parts. They share one optional config file and one optional project log.
@@ -27,7 +31,7 @@ parts. They share one optional config file and one optional project log.
                                           ┌───────────────────────┼───────────────────────┐
                                           ▼                       ▼                       ▼
                                       fetchsub              Jellyfin rescan           ntfy push
-                                 (writes .por.srt)        (Library/Refresh)        (📺 to your phone)
+                                 (writes .<iso>.srt)      (Library/Refresh)        (📺 to your phone)
 ```
 
 ## Install
@@ -77,34 +81,35 @@ fetchsub --imdb 133093 "/path/The Matrix.mkv"  # force a title id
 
 ## Choosing the subtitle language
 
-The default is **Brazilian Portuguese (pt-BR)** — and *only* pt-BR, never
-European Portuguese (pt-PT). To fetch another language, set `SUB_LANG`:
+The default is **English (`en`)**, but any language is a first-class citizen.
+Set `SUB_LANG` to whatever you want — one-off:
 
 ```bash
-SUB_LANG=en fetchsub "/path/Movie.mkv"      # one-off
+SUB_LANG=es fetchsub "/path/Movie.mkv"      # Spanish, just this run
 ```
-…or set it permanently in `~/.config/mediaserver/config.env` (`postdl` exports
-it to `fetchsub`):
+…or permanently in `~/.config/mediaserver/config.env` (`postdl` exports it to
+`fetchsub`, so the whole pipeline follows):
 ```bash
-SUB_LANG="es"          # e.g. Spanish; sidecars become .spa.srt
+SUB_LANG="fr"          # French; sidecars become .fre.srt
 SUB_LANG_FALLBACK="0"  # 1 = also accept the broader variant when exact is missing
 ```
 
 Built-in languages (each maps to the right OpenSubtitles code, SubDL code, and
-Jellyfin `.iso` sidecar): `pt-br` `pt` `en` `es` `es-mx` `fr` `de` `it` `nl`
-`pl` `ru` `ja` `ko` `zh-cn` `ar` `tr`. Any other OpenSubtitles code also works
-(best-effort). To add or tweak one, edit the `LANG_TABLE` dict at the top of
-`fetchsub` — it's a single, well-commented table.
+Jellyfin `.iso` sidecar): `en` `es` `es-mx` `fr` `de` `it` `nl` `pl` `ru` `ja`
+`ko` `zh-cn` `ar` `tr` `pt-br` `pt`. **Any other OpenSubtitles language code
+also works** (best-effort sidecar). To add or fine-tune one, edit the
+`LANG_TABLE` dict at the top of `fetchsub` — it's a single, well-commented table.
 
-**Strict by default:** only the exact variant is downloaded. A `pt-br` request
-will never grab a `pt-PT` file; set `SUB_LANG_FALLBACK=1` if you'd rather take
-the broader language than nothing.
+**Strict by default:** only the exact variant is downloaded — `es` won't grab
+`es-MX`, and `pt-br` (Brazilian) will never grab `pt` (European Portuguese) or
+vice-versa. Set `SUB_LANG_FALLBACK=1` if you'd rather take the broader language
+than nothing.
 
 ## How `fetchsub` chooses a subtitle
 
-It saves the sidecar as **`<video>.<iso>.srt`** (e.g. `.por.srt` for Portuguese,
-`.eng.srt` for English) so Jellyfin auto-selects the language — *not*
-`.pt-br.srt`, which Jellyfin won't recognise.
+It saves the sidecar as **`<video>.<iso>.srt`** (e.g. `.eng.srt` for English,
+`.spa.srt` for Spanish, `.por.srt` for Portuguese) so Jellyfin auto-selects the
+language — *not* `.en.srt` / `.pt-br.srt`, which Jellyfin won't recognise.
 
 Provider order, stopping at the first confident match:
 
