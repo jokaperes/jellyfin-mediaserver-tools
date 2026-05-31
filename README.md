@@ -75,10 +75,36 @@ fetchsub "/srv/media/shows/A Show/Season 01"   # whole folder, recursive
 fetchsub --imdb 133093 "/path/The Matrix.mkv"  # force a title id
 ```
 
+## Choosing the subtitle language
+
+The default is **Brazilian Portuguese (pt-BR)** — and *only* pt-BR, never
+European Portuguese (pt-PT). To fetch another language, set `SUB_LANG`:
+
+```bash
+SUB_LANG=en fetchsub "/path/Movie.mkv"      # one-off
+```
+…or set it permanently in `~/.config/mediaserver/config.env` (`postdl` exports
+it to `fetchsub`):
+```bash
+SUB_LANG="es"          # e.g. Spanish; sidecars become .spa.srt
+SUB_LANG_FALLBACK="0"  # 1 = also accept the broader variant when exact is missing
+```
+
+Built-in languages (each maps to the right OpenSubtitles code, SubDL code, and
+Jellyfin `.iso` sidecar): `pt-br` `pt` `en` `es` `es-mx` `fr` `de` `it` `nl`
+`pl` `ru` `ja` `ko` `zh-cn` `ar` `tr`. Any other OpenSubtitles code also works
+(best-effort). To add or tweak one, edit the `LANG_TABLE` dict at the top of
+`fetchsub` — it's a single, well-commented table.
+
+**Strict by default:** only the exact variant is downloaded. A `pt-br` request
+will never grab a `pt-PT` file; set `SUB_LANG_FALLBACK=1` if you'd rather take
+the broader language than nothing.
+
 ## How `fetchsub` chooses a subtitle
 
-It saves the sidecar as **`<video>.por.srt`** (ISO-639 `por`) so Jellyfin
-auto-selects Portuguese — *not* `.pt-br.srt`, which Jellyfin won't recognise.
+It saves the sidecar as **`<video>.<iso>.srt`** (e.g. `.por.srt` for Portuguese,
+`.eng.srt` for English) so Jellyfin auto-selects the language — *not*
+`.pt-br.srt`, which Jellyfin won't recognise.
 
 Provider order, stopping at the first confident match:
 
@@ -90,10 +116,12 @@ Provider order, stopping at the first confident match:
      (cached per run) and searches by that. For a TV file, `--imdb` is treated
      as the show's *parent* id.
    - **Movies → `imdb_id`** (when `--imdb` is given), else a title+year-filtered
-     free-text query, progressively relaxed (`pt-br` → `pt-br,pt` → drop year).
-   - Ranking (`os_best`): moviehash match → language tier (**pt-BR > pt-PT**) →
-     **source-type match** (WEB-DL/BluRay/etc — same source ≈ same fps/cut ≈
-     correct timing) → trusted uploader → download count.
+     free-text query, relaxed once by dropping the year.
+   - Ranking (`os_best`): moviehash match → language tier (exact variant beats
+     the broader fallback, e.g. **pt-BR > pt-PT**) → **source-type match**
+     (WEB-DL/BluRay/etc — same source ≈ same fps/cut ≈ correct timing) →
+     trusted uploader → download count. Results outside the configured
+     language set are discarded before ranking.
 2. **SubDL** (`api.subdl.com`) — only if `~/.config/subdl/api_key` exists.
    ⚠️ **SubDL language codes are non-standard:** Brazilian Portuguese is
    `BR_PT` (not `PT-BR`/`PB`/`BR`, which error out); Portugal is `PT`.

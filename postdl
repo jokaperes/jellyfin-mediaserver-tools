@@ -4,11 +4,14 @@
 # Fetches PT-BR subtitles, triggers a Jellyfin scan, then pushes an ntfy alert.
 set -u
 
-# 1. Load config
+# 1. Load config. `set -a` auto-exports every sourced var so child processes
+#    (notably fetchsub) inherit SUB_LANG / LOG_FILE / PROJECT_LOG / etc.
 CONF_FILE="$HOME/.config/mediaserver/config.env"
 if [ -f "$CONF_FILE" ]; then
+  set -a
   # shellcheck source=/dev/null
   source "$CONF_FILE"
+  set +a
 else
   echo "Error: Config file not found at $CONF_FILE. Please create it using config.env.example." >&2
   exit 1
@@ -21,10 +24,31 @@ SAVE="${4:-}"
 
 # Load settings from config, or use sensible defaults
 LOG="${LOG_FILE:-$HOME/.config/opensubtitles/fetchsub.log}"
-PROJECT_LOG="${PROJECT_LOG:-/srv/downloads/mediaserver.log}"
+PROJECT_LOG="${PROJECT_LOG:-$HOME/.config/mediaserver/mediaserver.log}"
 JELLYFIN_KEY="${JELLYFIN_KEY:-}"
 NTFY_URL="${NTFY_URL:-}"
 JELLYFIN_URL="${JELLYFIN_URL:-http://localhost:8096}"
+SUB_LABEL="${SUB_LABEL:-PT-BR}"   # word shown in the notification text
+
+# Subtitle sidecar suffix (ISO-639-2), mirrors fetchsub's SUB_LANG so the
+# "has subtitle?" check below looks for the right file. Defaults to pt-BR=por.
+case "${SUB_LANG:-pt-br}" in
+  pt-br|pt) SUB_ISO="por" ;;
+  en)       SUB_ISO="eng" ;;
+  es|es-mx) SUB_ISO="spa" ;;
+  fr)       SUB_ISO="fre" ;;
+  de)       SUB_ISO="ger" ;;
+  it)       SUB_ISO="ita" ;;
+  nl)       SUB_ISO="dut" ;;
+  pl)       SUB_ISO="pol" ;;
+  ru)       SUB_ISO="rus" ;;
+  ja)       SUB_ISO="jpn" ;;
+  ko)       SUB_ISO="kor" ;;
+  zh-cn)    SUB_ISO="chi" ;;
+  ar)       SUB_ISO="ara" ;;
+  tr)       SUB_ISO="tur" ;;
+  *)        SUB_ISO="por" ;;
+esac
 
 plog() { echo "$(date '+%F %T') [postdl] $*" >> "$PROJECT_LOG" 2>/dev/null || true; }
 
@@ -76,16 +100,17 @@ PY
 HAVE_SUB=0
 if [ -f "${CONTENT}" ]; then
   BASE="${CONTENT%.*}"
-  for ext in por.srt por.ass; do
+  for ext in "${SUB_ISO}.srt" "${SUB_ISO}.ass"; do
     [ -f "${BASE}.${ext}" ] && HAVE_SUB=1
   done
-elif find "${CONTENT:-$SAVE}" \( -iname '*.por.srt' -o -iname '*.por.ass' \) 2>/dev/null | grep -q .; then
+elif find "${CONTENT:-$SAVE}" \( -iname "*.${SUB_ISO}.srt" -o -iname "*.${SUB_ISO}.ass" \) 2>/dev/null | grep -q .; then
   HAVE_SUB=1
 fi
+# Notification wording (SUB_LABEL is resolved above; defaults to PT-BR).
 if [ "$HAVE_SUB" -eq 1 ]; then
-  SUBNOTE="com legenda PT-BR"
+  SUBNOTE="com legenda ${SUB_LABEL}"
 else
-  SUBNOTE="legenda PT-BR não encontrada"
+  SUBNOTE="legenda ${SUB_LABEL} não encontrada"
 fi
 
 case "$CATEGORY" in

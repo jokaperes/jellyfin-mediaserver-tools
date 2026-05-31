@@ -61,10 +61,33 @@ fetchsub "/srv/media/shows/Serie/Season 01"    # pasta inteira, recursivo
 fetchsub --imdb 133093 "/path/Matrix.mkv"      # forçar um id
 ```
 
+## Escolhendo o idioma da legenda
+
+O padrão é **português do Brasil (pt-BR)** — e **só** pt-BR, nunca o de
+Portugal (pt-PT). Pra buscar outro idioma, use `SUB_LANG`:
+
+```bash
+SUB_LANG=en fetchsub "/path/Filme.mkv"      # pontual
+```
+…ou fixe no `~/.config/mediaserver/config.env` (o `postdl` repassa pro `fetchsub`):
+```bash
+SUB_LANG="es"          # ex.: espanhol; sidecar vira .spa.srt
+SUB_LANG_FALLBACK="0"  # 1 = aceita a variante ampla quando a exata falta
+```
+
+Idiomas prontos: `pt-br` `pt` `en` `es` `es-mx` `fr` `de` `it` `nl` `pl` `ru`
+`ja` `ko` `zh-cn` `ar` `tr` (qualquer código do OpenSubtitles também funciona).
+Pra adicionar/ajustar, edite a tabela `LANG_TABLE` no topo do `fetchsub`.
+
+**Estrito por padrão:** só a variante exata é baixada — um pedido `pt-br`
+**nunca** baixa um arquivo `pt-PT`. Use `SUB_LANG_FALLBACK=1` se preferir a
+variante ampla a ficar sem legenda.
+
 ## Como o `fetchsub` escolhe a legenda
 
-Salva como **`<video>.por.srt`** (ISO-639 `por`) pro Jellyfin selecionar o
-português automaticamente — **não** use `.pt-br.srt` (o Jellyfin não reconhece).
+Salva como **`<video>.<iso>.srt`** (ex.: `.por.srt` p/ português, `.eng.srt`
+p/ inglês) pro Jellyfin selecionar o idioma automaticamente — **não** use
+`.pt-br.srt` (o Jellyfin não reconhece).
 
 Ordem dos provedores, parando no primeiro acerto confiável:
 

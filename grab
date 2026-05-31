@@ -12,7 +12,7 @@ fi
 
 # Load settings from config, or use sensible defaults
 QBT="${QBT_URL:-http://localhost:8080}"
-PROJECT_LOG="${PROJECT_LOG:-/srv/downloads/mediaserver.log}"
+PROJECT_LOG="${PROJECT_LOG:-$HOME/.config/mediaserver/mediaserver.log}"
 
 plog() { echo "$(date '+%F %T') [grab] $*" >> "$PROJECT_LOG" 2>/dev/null || true; }
 

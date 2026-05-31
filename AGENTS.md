@@ -19,8 +19,10 @@ repo root. Deploy them to `/usr/local/bin/`.
    are gitignored. Do not hardcode keys, real IPs, hostnames, ntfy topics, or
    absolute home paths into tracked files. Before any commit, grep the diff for
    leaks (keys, `192.168.*`, tailnet `100.*` IPs, `ntfy.sh/<topic>`).
-2. **Subtitle sidecars must be named `<video>.por.srt`** (ISO-639-2 `por`).
-   Jellyfin auto-selects `por`; it ignores `.pt-br`/`.pt-BR`/`.pb`.
+2. **Subtitle sidecars must be named `<video>.<iso639-2>.srt`** — `.por.srt`
+   for Portuguese, `.eng.srt` for English, etc. Jellyfin reads the ISO-639-2
+   code; it ignores `.pt-br`/`.pt-BR`/`.pb`. `fetchsub` derives this from the
+   `SUB_LANG` env var (default `pt-br` → `por`); `postdl` mirrors the same map.
 3. **Do not seed / do not open inbound ports** if the host owner runs privacy-
    first (firewalled, VPN-only). Lock the qBittorrent + Jellyfin APIs to
    localhost or the private network.
@@ -59,13 +61,21 @@ repo root. Deploy them to `/usr/local/bin/`.
 
 ## Subtitle logic you must preserve when modifying `fetchsub`
 
+- **Language is config-driven via `SUB_LANG`** (default `pt-br`). The
+  `LANG_TABLE` dict maps each language key to its OpenSubtitles codes, SubDL
+  codes, and ISO-639-2 sidecar suffix. To support a new language, add a row —
+  do *not* sprinkle language strings through the code.
+- **Strict by default:** only the exact variant is queried and downloaded
+  (`OS_ACCEPT` is a hard allow-list). A `pt-br` run must never produce a
+  `pt-PT` file. `SUB_LANG_FALLBACK=1` opts into the broader variant.
 - **TV uses `parent_imdb_id` + season/episode**, not free-text `query` (which
   returns 0 for many series). The show id is resolved via
   `/features?query=<title>&type=tv` and cached per run. For a TV file, `--imdb`
   means the *show's parent* id; for a movie it means the movie's id.
-- **Ranking order** (`os_best`): moviehash match → language tier (pt-BR > pt-PT)
-  → source-type match (WEB-DL/BluRay…) → trusted → download count. Source-type
-  matters: a more-downloaded WebRip sub can drift on a WEB-DL video.
+- **Ranking order** (`os_best`): moviehash match → language tier (exact variant
+  beats the broader fallback) → source-type match (WEB-DL/BluRay…) → trusted →
+  download count. Source-type matters: a more-downloaded WebRip sub can drift
+  on a WEB-DL video.
 - **SubDL language codes are non-standard:** Brazilian Portuguese is `BR_PT`
   (not `PT-BR`/`PB`/`BR`); Portugal is `PT`.
 - `strip_ads` removes provider ad blocks, strips a leading BOM, renumbers cues.
