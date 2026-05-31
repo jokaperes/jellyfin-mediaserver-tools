@@ -22,8 +22,12 @@ OS_API = "https://api.opensubtitles.com/api/v1"
 UA = "JellyfinPiGrabber v1.1"
 OS_KEY_FILE = os.path.expanduser("~/.config/opensubtitles/api_key")
 SUBDL_KEY_FILE = os.path.expanduser("~/.config/subdl/api_key")
-LOG_FILE = os.path.expanduser("~/.config/opensubtitles/fetchsub.log")
-PROJECT_LOG = "/srv/downloads/mediaserver.log"
+# Log paths honour the same env vars postdl/grab read from config.env, with
+# portable per-user defaults so fetchsub works standalone on any machine.
+LOG_FILE = os.environ.get(
+    "LOG_FILE", os.path.expanduser("~/.config/opensubtitles/fetchsub.log"))
+PROJECT_LOG = os.environ.get(
+    "PROJECT_LOG", os.path.expanduser("~/.config/mediaserver/mediaserver.log"))
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".webm", ".ts"}
 
 
