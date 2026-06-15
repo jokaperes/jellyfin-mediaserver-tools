@@ -20,6 +20,9 @@ Usage:
   fetchsub <video-file-or-directory> [more...]
   fetchsub --imdb <id> <video-file>     # force a title id: the show's parent
                                         # IMDb id for TV, or the movie's id
+  fetchsub --dry-run <video-file-or-directory> [more...]
+                                        # list videos without reading API keys
+                                        # or contacting subtitle providers
   SUB_LANG=en fetchsub <video-file>     # fetch a different language
 """
 import os, sys, re, json, struct, time, io, zipfile
@@ -491,13 +494,34 @@ def collect(path):
 
 def main():
     args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(0)
     imdb = None
+    dry_run = False
+    if args and args[0] == "--dry-run":
+        dry_run = True
+        args = args[1:]
     if args and args[0] == "--imdb":
+        if len(args) < 2:
+            print("ERROR: --imdb requires an id", file=sys.stderr)
+            sys.exit(2)
         imdb = args[1]
         args = args[2:]
+    if args and args[0] == "--dry-run":
+        dry_run = True
+        args = args[1:]
     if not args:
         print(__doc__)
         sys.exit(1)
+    if dry_run:
+        found = []
+        for arg in args:
+            found.extend(collect(arg))
+        for video in found:
+            print(video)
+        print(f"dry-run: {len(found)} video(s) found")
+        sys.exit(0)
     os_key = read_key(OS_KEY_FILE)
     if not os_key:
         log("ERROR: no OpenSubtitles API key")
