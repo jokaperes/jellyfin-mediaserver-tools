@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shellcheck:
+    name: ShellCheck (grab, postdl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck grab and postdl
+        run: shellcheck grab postdl
+
+  python:
+    name: Lint + smoke test (fetchsub)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install pyflakes
+        run: pip install --quiet pyflakes
+
+      - name: Syntax check (py_compile)
+        run: python -m py_compile fetchsub
+
+      - name: Static lint (pyflakes)
+        run: python -m pyflakes fetchsub
+
+      - name: Smoke test (no network, no API keys required)
+        run: |
+          set +e
+          out_help=$(python3 fetchsub --help 2>&1)
+          status_help=$?
+          out_empty=$(python3 fetchsub 2>&1)
+          status_empty=$?
+          set -e
+          echo "--- fetchsub --help (exit $status_help) ---"
+          echo "$out_help"
+          echo "--- fetchsub (no args) (exit $status_empty) ---"
+          echo "$out_empty"
+          if echo "$out_help" | grep -qi "Traceback (most recent call last)"; then
+            echo "::error::fetchsub --help raised an unhandled Python exception"
+            exit 1
+          fi
+          if echo "$out_empty" | grep -qi "Traceback (most recent call last)"; then
+            echo "::error::fetchsub (no args) raised an unhandled Python exception"
+            exit 1
+          fi
+          echo "fetchsub smoke test passed (no traceback; no network or API keys needed)"
