@@ -177,8 +177,29 @@ AD_RE = re.compile(r"opensubtitles|anuncie seu produto|legende seu|os\.org|"
                    r"subscene|subdivx|allsubs|addic7ed|baixe agora|subdl", re.I)
 
 
+def decode_sub(raw):
+    """Decode subtitle bytes to text without destroying accented characters.
+
+    Many subtitles ship as Windows-1252 / Latin-1 rather than UTF-8. Blindly
+    decoding those as UTF-8 with errors="replace" turned every non-ASCII byte
+    into U+FFFD (the lost-character glyph). Honour an explicit BOM, accept UTF-8
+    only when it decodes cleanly, otherwise fall back to cp1252 (with latin-1 as
+    a never-fail guard).
+    """
+    if raw[:3] == b"\xef\xbb\xbf":
+        return raw[3:].decode("utf-8", errors="replace")
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", errors="replace")
+    for enc in ("utf-8", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1")
+
+
 def strip_ads(raw):
-    text = raw.decode("utf-8", errors="replace").lstrip("\ufeff")
+    text = decode_sub(raw).lstrip("\ufeff")
     blocks = re.split(r"\n\s*\n", text.strip())
     kept = [b for b in blocks if not AD_RE.search(b)]
     out = []
